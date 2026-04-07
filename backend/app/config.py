@@ -80,6 +80,18 @@ class Config:
     AUTH_DYNAMODB_SIMULATION_PK_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_SIMULATION_PK_ATTRIBUTE', '')
     AUTH_DYNAMODB_PROJECT_PK_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_PROJECT_PK_ATTRIBUTE', '')
     AUTH_DYNAMODB_GRAPH_PK_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_GRAPH_PK_ATTRIBUTE', '')
+
+    # CORS：生产环境设置 CORS_ALLOWED_ORIGINS（逗号分隔），勿用 *。留空则仍为 *（便于本地开发）
+    # 例：https://app.vercel.app,http://localhost:3000
+    _cors_raw = (os.environ.get('CORS_ALLOWED_ORIGINS') or '').strip()
+    if _cors_raw:
+        CORS_ORIGINS = [o.strip() for o in _cors_raw.split(',') if o.strip()]
+    else:
+        CORS_ORIGINS = '*'
+    # fetch(..., credentials: 'include') 或 Cookie 跨站时需要；且浏览器禁止 * + credentials 组合
+    CORS_SUPPORTS_CREDENTIALS = os.environ.get(
+        'CORS_SUPPORTS_CREDENTIALS', 'false'
+    ).lower() == 'true'
     
     @classmethod
     def validate(cls):
@@ -98,5 +110,9 @@ class Config:
                 errors.append("AUTH_ENABLED 为 true 时需要 AUTH_DYNAMODB_TABLE_NAME")
             if not cls.AUTH_DYNAMODB_PK_ATTRIBUTE:
                 errors.append("AUTH_ENABLED 为 true 时需要 AUTH_DYNAMODB_PK_ATTRIBUTE")
+        if cls.CORS_SUPPORTS_CREDENTIALS and cls.CORS_ORIGINS == '*':
+            errors.append(
+                "CORS_SUPPORTS_CREDENTIALS=true 时必须设置 CORS_ALLOWED_ORIGINS（不能使用通配符 *）"
+            )
         return errors
 

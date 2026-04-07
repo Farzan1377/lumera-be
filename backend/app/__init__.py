@@ -39,8 +39,11 @@ def create_app(config_class=Config):
         logger.info("MiroFish Backend 启动中...")
         logger.info("=" * 50)
     
-    # 启用CORS
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    # CORS：通过 CORS_ALLOWED_ORIGINS 限制来源；未设置时与原先一致为 *
+    _cors = {"origins": config_class.CORS_ORIGINS}
+    if config_class.CORS_SUPPORTS_CREDENTIALS:
+        _cors["supports_credentials"] = True
+    CORS(app, resources={r"/api/*": _cors})
     
     # 注册模拟进程清理函数（确保服务器关闭时终止所有模拟进程）
     from .services.simulation_runner import SimulationRunner
@@ -60,6 +63,15 @@ def create_app(config_class=Config):
     def log_response(response):
         logger = get_logger('mirofish.request')
         logger.debug(f"响应: {response.status_code}")
+        # 生产环境：不在 JSON 响应中包含 traceback（路由里仍可能写入，统一在此剔除）
+        if not app.config.get('DEBUG', False):
+            ct = response.content_type or ''
+            if 'application/json' in ct and response.status_code >= 400:
+                data = response.get_json(silent=True)
+                if isinstance(data, dict) and 'traceback' in data:
+                    data = {k: v for k, v in data.items() if k != 'traceback'}
+                    response.set_data(app.json.dumps(data))
+                    response.headers['Content-Length'] = None
         return response
     
     # 注册蓝图（在注册到 app 之前挂上 auth，否则 Flask 会拒绝修改 blueprint）
