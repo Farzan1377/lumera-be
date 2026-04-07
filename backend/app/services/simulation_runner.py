@@ -232,24 +232,31 @@ class SimulationRunner:
         """获取运行状态"""
         if simulation_id in cls._run_states:
             return cls._run_states[simulation_id]
-        
+
+        # 多实例：本机无内存时从 DynamoDB 快照读取（子进程仍在单机；停止/日志仅本机有效）
+        try:
+            from ..utils.app_state_store import app_state_enabled, get_run_state_payload
+
+            if app_state_enabled():
+                raw = get_run_state_payload(simulation_id)
+                if raw:
+                    state = cls._run_state_from_dict(raw, simulation_id)
+                    if state:
+                        cls._run_states[simulation_id] = state
+                        return state
+        except Exception as e:
+            logger.debug("DynamoDB run state read skipped: %s", e)
+
         # 尝试从文件加载
         state = cls._load_run_state(simulation_id)
         if state:
             cls._run_states[simulation_id] = state
         return state
-    
+
     @classmethod
-    def _load_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
-        """从文件加载运行状态"""
-        state_file = os.path.join(cls.RUN_STATE_DIR, simulation_id, "run_state.json")
-        if not os.path.exists(state_file):
-            return None
-        
+    def _run_state_from_dict(cls, data: Dict[str, Any], simulation_id: str) -> Optional[SimulationRunState]:
+        """从 run_state.json / DynamoDB 的 detail 字典构建 SimulationRunState"""
         try:
-            with open(state_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
             state = SimulationRunState(
                 simulation_id=simulation_id,
                 runner_status=RunnerStatus(data.get("runner_status", "idle")),
@@ -257,7 +264,6 @@ class SimulationRunner:
                 total_rounds=data.get("total_rounds", 0),
                 simulated_hours=data.get("simulated_hours", 0),
                 total_simulation_hours=data.get("total_simulation_hours", 0),
-                # 各平台独立轮次和时间
                 twitter_current_round=data.get("twitter_current_round", 0),
                 reddit_current_round=data.get("reddit_current_round", 0),
                 twitter_simulated_hours=data.get("twitter_simulated_hours", 0),
@@ -274,23 +280,37 @@ class SimulationRunner:
                 error=data.get("error"),
                 process_pid=data.get("process_pid"),
             )
-            
-            # 加载最近动作
             actions_data = data.get("recent_actions", [])
             for a in actions_data:
-                state.recent_actions.append(AgentAction(
-                    round_num=a.get("round_num", 0),
-                    timestamp=a.get("timestamp", ""),
-                    platform=a.get("platform", ""),
-                    agent_id=a.get("agent_id", 0),
-                    agent_name=a.get("agent_name", ""),
-                    action_type=a.get("action_type", ""),
-                    action_args=a.get("action_args", {}),
-                    result=a.get("result"),
-                    success=a.get("success", True),
-                ))
-            
+                state.recent_actions.append(
+                    AgentAction(
+                        round_num=a.get("round_num", 0),
+                        timestamp=a.get("timestamp", ""),
+                        platform=a.get("platform", ""),
+                        agent_id=a.get("agent_id", 0),
+                        agent_name=a.get("agent_name", ""),
+                        action_type=a.get("action_type", ""),
+                        action_args=a.get("action_args", {}),
+                        result=a.get("result"),
+                        success=a.get("success", True),
+                    )
+                )
             return state
+        except Exception as e:
+            logger.error("解析运行状态失败: %s", e)
+            return None
+    
+    @classmethod
+    def _load_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
+        """从文件加载运行状态"""
+        state_file = os.path.join(cls.RUN_STATE_DIR, simulation_id, "run_state.json")
+        if not os.path.exists(state_file):
+            return None
+        
+        try:
+            with open(state_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return cls._run_state_from_dict(data, simulation_id)
         except Exception as e:
             logger.error(f"加载运行状态失败: {str(e)}")
             return None
@@ -308,6 +328,14 @@ class SimulationRunner:
             json.dump(data, f, ensure_ascii=False, indent=2)
         
         cls._run_states[state.simulation_id] = state
+
+        try:
+            from ..utils.app_state_store import app_state_enabled, put_run_state_payload
+
+            if app_state_enabled():
+                put_run_state_payload(state.simulation_id, data)
+        except Exception:
+            pass
     
     @classmethod
     def start_simulation(

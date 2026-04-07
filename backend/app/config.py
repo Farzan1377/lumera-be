@@ -81,6 +81,12 @@ class Config:
     AUTH_DYNAMODB_PROJECT_PK_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_PROJECT_PK_ATTRIBUTE', '')
     AUTH_DYNAMODB_GRAPH_PK_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_GRAPH_PK_ATTRIBUTE', '')
 
+    # 可选：任务与模拟运行状态快照表（多进程/多实例时与本地文件一并写入，供其他实例读取）
+    # 表结构：PK id (String)，属性 entity_type (TASK|RUN)、payload (JSON 字符串)、updated_at
+    DYNAMODB_APP_STATE_TABLE_NAME = (
+        os.environ.get('DYNAMODB_APP_STATE_TABLE_NAME') or ""
+    ).strip() or None
+
     # CORS：生产环境设置 CORS_ALLOWED_ORIGINS（逗号分隔），勿用 *。留空则仍为 *（便于本地开发）
     # 例：https://app.vercel.app,http://localhost:3000
     _cors_raw = (os.environ.get('CORS_ALLOWED_ORIGINS') or '').strip()

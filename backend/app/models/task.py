@@ -52,6 +52,30 @@ class Task:
             "metadata": self.metadata,
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Task":
+        """从 to_dict() / DynamoDB 快照恢复"""
+        status = data.get("status", "pending")
+        if isinstance(status, TaskStatus):
+            st = status
+        else:
+            st = TaskStatus(status)
+        ca = data.get("created_at", "")
+        ua = data.get("updated_at", "")
+        return cls(
+            task_id=data["task_id"],
+            task_type=data.get("task_type", ""),
+            status=st,
+            created_at=datetime.fromisoformat(ca) if ca else datetime.now(),
+            updated_at=datetime.fromisoformat(ua) if ua else datetime.now(),
+            progress=int(data.get("progress", 0)),
+            message=data.get("message", "") or "",
+            result=data.get("result"),
+            error=data.get("error"),
+            metadata=data.get("metadata") or {},
+            progress_detail=data.get("progress_detail") or {},
+        )
+
 
 class TaskManager:
     """
@@ -97,13 +121,33 @@ class TaskManager:
         
         with self._task_lock:
             self._tasks[task_id] = task
-        
+
+        try:
+            from ..utils import app_state_store
+
+            if app_state_store.app_state_enabled():
+                app_state_store.put_task_item(task.to_dict())
+        except Exception:
+            pass
+
         return task_id
     
     def get_task(self, task_id: str) -> Optional[Task]:
         """获取任务"""
         with self._task_lock:
-            return self._tasks.get(task_id)
+            local = self._tasks.get(task_id)
+        if local:
+            return local
+        try:
+            from ..utils import app_state_store
+
+            if app_state_store.app_state_enabled():
+                raw = app_state_store.get_task_item(task_id)
+                if raw:
+                    return Task.from_dict(raw)
+        except Exception:
+            pass
+        return None
     
     def update_task(
         self,
@@ -129,20 +173,41 @@ class TaskManager:
         """
         with self._task_lock:
             task = self._tasks.get(task_id)
-            if task:
-                task.updated_at = datetime.now()
-                if status is not None:
-                    task.status = status
-                if progress is not None:
-                    task.progress = progress
-                if message is not None:
-                    task.message = message
-                if result is not None:
-                    task.result = result
-                if error is not None:
-                    task.error = error
-                if progress_detail is not None:
-                    task.progress_detail = progress_detail
+        if task is None:
+            try:
+                from ..services import app_state_store
+
+                if app_state_store.app_state_enabled():
+                    raw = app_state_store.get_task_item(task_id)
+                    if raw:
+                        task = Task.from_dict(raw)
+                        with self._task_lock:
+                            self._tasks[task_id] = task
+            except Exception:
+                task = None
+        if not task:
+            return
+        with self._task_lock:
+            task.updated_at = datetime.now()
+            if status is not None:
+                task.status = status
+            if progress is not None:
+                task.progress = progress
+            if message is not None:
+                task.message = message
+            if result is not None:
+                task.result = result
+            if error is not None:
+                task.error = error
+            if progress_detail is not None:
+                task.progress_detail = progress_detail
+        try:
+            from ..utils import app_state_store
+
+            if app_state_store.app_state_enabled():
+                app_state_store.put_task_item(task.to_dict())
+        except Exception:
+            pass
     
     def complete_task(self, task_id: str, result: Dict):
         """标记任务完成"""
@@ -165,6 +230,14 @@ class TaskManager:
     
     def list_tasks(self, task_type: Optional[str] = None) -> list:
         """列出任务"""
+        try:
+            from ..utils import app_state_store
+
+            if app_state_store.app_state_enabled():
+                rows = app_state_store.scan_tasks(task_type=task_type, limit=200)
+                return rows
+        except Exception:
+            pass
         with self._task_lock:
             tasks = list(self._tasks.values())
             if task_type:
