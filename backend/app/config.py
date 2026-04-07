@@ -87,6 +87,27 @@ class Config:
         os.environ.get('DYNAMODB_APP_STATE_TABLE_NAME') or ""
     ).strip() or None
 
+    # ----- Distributed execution (multi-host) -----
+    # When enabled, API can enqueue simulation-start jobs to SQS and workers execute them.
+    DISTRIBUTED_EXECUTION_ENABLED = os.environ.get(
+        'DISTRIBUTED_EXECUTION_ENABLED', 'false'
+    ).lower() == 'true'
+    # Workers set this true to consume queue messages and launch local subprocesses.
+    SIMULATION_WORKER_MODE = os.environ.get(
+        'SIMULATION_WORKER_MODE', 'false'
+    ).lower() == 'true'
+    # Shared artifact storage for simulation files (state/config/profiles/run_state).
+    S3_SIMULATION_BUCKET = (os.environ.get('S3_SIMULATION_BUCKET') or '').strip() or None
+    S3_SIMULATION_PREFIX = (os.environ.get('S3_SIMULATION_PREFIX') or 'simulations').strip()
+    # SQS queue URL for simulation start jobs.
+    SQS_SIMULATION_START_QUEUE_URL = (
+        os.environ.get('SQS_SIMULATION_START_QUEUE_URL') or ""
+    ).strip() or None
+    # Worker polling interval for SQS long-poll loop.
+    SIMULATION_WORKER_POLL_SECONDS = int(
+        os.environ.get('SIMULATION_WORKER_POLL_SECONDS', '5')
+    )
+
     # CORS：生产环境设置 CORS_ALLOWED_ORIGINS（逗号分隔），勿用 *。留空则仍为 *（便于本地开发）
     # 例：https://app.vercel.app,http://localhost:3000
     _cors_raw = (os.environ.get('CORS_ALLOWED_ORIGINS') or '').strip()

@@ -14,6 +14,10 @@ from enum import Enum
 
 from ..config import Config
 from ..utils.logger import get_logger
+from ..utils.distributed_execution import (
+    download_simulation_artifacts,
+    upload_simulation_artifacts,
+)
 from .zep_entity_reader import ZepEntityReader, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
@@ -153,6 +157,11 @@ class SimulationManager:
             json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
         
         self._simulations[state.simulation_id] = state
+        # 多机模式：将状态与相关文件同步到共享存储，供其他实例/worker读取
+        try:
+            upload_simulation_artifacts(state.simulation_id)
+        except Exception:
+            pass
     
     def _load_simulation_state(self, simulation_id: str) -> Optional[SimulationState]:
         """从文件加载模拟状态"""
@@ -161,6 +170,13 @@ class SimulationManager:
         
         sim_dir = self._get_simulation_dir(simulation_id)
         state_file = os.path.join(sim_dir, "state.json")
+
+        if not os.path.exists(state_file):
+            # 多机模式：本地无文件时，尝试从共享存储拉取
+            try:
+                download_simulation_artifacts(simulation_id)
+            except Exception:
+                pass
         
         if not os.path.exists(state_file):
             return None

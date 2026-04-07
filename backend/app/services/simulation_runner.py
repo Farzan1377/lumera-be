@@ -21,6 +21,10 @@ from queue import Queue
 from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_locale, set_locale
+from ..utils.distributed_execution import (
+    download_simulation_artifacts,
+    upload_simulation_artifacts,
+)
 from .zep_graph_memory_updater import ZepGraphMemoryManager
 from .simulation_ipc import SimulationIPCClient, CommandType, IPCResponse
 
@@ -205,10 +209,7 @@ class SimulationRunner:
     """
     
     # 运行状态存储目录
-    RUN_STATE_DIR = os.path.join(
-        os.path.dirname(__file__),
-        '../../uploads/simulations'
-    )
+    RUN_STATE_DIR = Config.OASIS_SIMULATION_DATA_DIR
     
     # 脚本目录
     SCRIPTS_DIR = os.path.join(
@@ -305,6 +306,11 @@ class SimulationRunner:
         """从文件加载运行状态"""
         state_file = os.path.join(cls.RUN_STATE_DIR, simulation_id, "run_state.json")
         if not os.path.exists(state_file):
+            try:
+                download_simulation_artifacts(simulation_id)
+            except Exception:
+                pass
+        if not os.path.exists(state_file):
             return None
         
         try:
@@ -336,6 +342,22 @@ class SimulationRunner:
                 put_run_state_payload(state.simulation_id, data)
         except Exception:
             pass
+        try:
+            upload_simulation_artifacts(state.simulation_id)
+        except Exception:
+            pass
+
+    @classmethod
+    def mark_queued(cls, simulation_id: str, total_rounds: int = 0) -> SimulationRunState:
+        """标记模拟为已排队（由分布式 worker 异步执行）。"""
+        state = SimulationRunState(
+            simulation_id=simulation_id,
+            runner_status=RunnerStatus.STARTING,
+            total_rounds=total_rounds,
+            started_at=datetime.now().isoformat(),
+        )
+        cls._save_run_state(state)
+        return state
     
     @classmethod
     def start_simulation(
@@ -367,6 +389,12 @@ class SimulationRunner:
         # 加载模拟配置
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         config_path = os.path.join(sim_dir, "simulation_config.json")
+
+        if not os.path.exists(config_path):
+            try:
+                download_simulation_artifacts(simulation_id)
+            except Exception:
+                pass
         
         if not os.path.exists(config_path):
             raise ValueError(f"模拟配置不存在，请先调用 /prepare 接口")

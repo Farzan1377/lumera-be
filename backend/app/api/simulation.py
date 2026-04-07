@@ -23,6 +23,11 @@ from ..services.simulation_manager import SimulationManager, SimulationStatus
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..utils.logger import get_logger
 from ..utils.locale import t, get_locale, set_locale
+from ..utils.distributed_execution import (
+    distributed_enabled,
+    worker_mode_enabled,
+    enqueue_start_job,
+)
 from ..models.project import ProjectManager
 
 logger = get_logger('mirofish.api.simulation')
@@ -1692,20 +1697,40 @@ def start_simulation():
             
             logger.info(f"启用图谱记忆更新: simulation_id={simulation_id}, graph_id={graph_id}")
         
-        # 启动模拟
-        run_state = SimulationRunner.start_simulation(
-            simulation_id=simulation_id,
-            platform=platform,
-            max_rounds=max_rounds,
-            enable_graph_memory_update=enable_graph_memory_update,
-            graph_id=graph_id
-        )
-        
-        # 更新模拟状态
-        state.status = SimulationStatus.RUNNING
-        manager._save_simulation_state(state)
-        
-        response_data = run_state.to_dict()
+        distributed_queue_mode = distributed_enabled() and not worker_mode_enabled()
+        if distributed_queue_mode:
+            message_id = enqueue_start_job(
+                {
+                    "simulation_id": simulation_id,
+                    "platform": platform,
+                    "max_rounds": max_rounds,
+                    "enable_graph_memory_update": enable_graph_memory_update,
+                    "graph_id": graph_id,
+                    "force": force,
+                }
+            )
+            run_state = SimulationRunner.mark_queued(simulation_id)
+            state.status = SimulationStatus.RUNNING
+            manager._save_simulation_state(state)
+            response_data = run_state.to_dict()
+            response_data['queued'] = True
+            response_data['queue_message_id'] = message_id
+        else:
+            # 启动模拟（本机模式 / worker 执行模式）
+            run_state = SimulationRunner.start_simulation(
+                simulation_id=simulation_id,
+                platform=platform,
+                max_rounds=max_rounds,
+                enable_graph_memory_update=enable_graph_memory_update,
+                graph_id=graph_id
+            )
+
+            # 更新模拟状态
+            state.status = SimulationStatus.RUNNING
+            manager._save_simulation_state(state)
+            response_data = run_state.to_dict()
+            response_data['queued'] = False
+
         if max_rounds:
             response_data['max_rounds_applied'] = max_rounds
         response_data['graph_memory_update_enabled'] = enable_graph_memory_update
