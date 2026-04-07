@@ -62,8 +62,10 @@ def create_app(config_class=Config):
         logger.debug(f"响应: {response.status_code}")
         return response
     
-    # 注册蓝图
+    # 注册蓝图（在注册到 app 之前挂上 auth，否则 Flask 会拒绝修改 blueprint）
     from .api import graph_bp, simulation_bp, report_bp
+    from .auth.flask_hooks import register_api_auth
+    register_api_auth(app)
     app.register_blueprint(graph_bp, url_prefix='/api/graph')
     app.register_blueprint(simulation_bp, url_prefix='/api/simulation')
     app.register_blueprint(report_bp, url_prefix='/api/report')

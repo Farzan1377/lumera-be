@@ -6,9 +6,17 @@ Report API路由
 import os
 import traceback
 import threading
-from flask import request, jsonify, send_file
+from flask import request, jsonify, send_file, g
 
 from . import report_bp
+from ..auth.access import (
+    ensure_graph_owned,
+    ensure_simulation_owned,
+    ensure_report_id_owned,
+    ensure_task_owned,
+    filter_owned_ids,
+    jsonify_error,
+)
 from ..config import Config
 from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
 from ..services.simulation_manager import SimulationManager
@@ -56,6 +64,10 @@ def generate_report():
                 "success": False,
                 "error": t('api.requireSimulationId')
             }), 400
+
+        err = ensure_simulation_owned(getattr(g, 'user_sub', None), simulation_id)
+        if err:
+            return jsonify_error(err)
 
         force_regenerate = data.get('force_regenerate', False)
         
@@ -227,6 +239,11 @@ def get_generate_status():
         
         task_id = data.get('task_id')
         simulation_id = data.get('simulation_id')
+        us = getattr(g, 'user_sub', None)
+        if simulation_id:
+            e = ensure_simulation_owned(us, simulation_id)
+            if e:
+                return jsonify_error(e)
         
         # 如果提供了simulation_id，先检查是否已有完成的报告
         if simulation_id:
@@ -258,6 +275,10 @@ def get_generate_status():
                 "success": False,
                 "error": t('api.taskNotFound', id=task_id)
             }), 404
+
+        e = ensure_task_owned(us, task)
+        if e:
+            return jsonify_error(e)
         
         return jsonify({
             "success": True,
@@ -294,6 +315,10 @@ def get_report(report_id: str):
         }
     """
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         report = ReportManager.get_report(report_id)
         
         if not report:
@@ -331,6 +356,10 @@ def get_report_by_simulation(simulation_id: str):
         }
     """
     try:
+        err = ensure_simulation_owned(getattr(g, 'user_sub', None), simulation_id)
+        if err:
+            return jsonify_error(err)
+
         report = ReportManager.get_report_by_simulation(simulation_id)
         
         if not report:
@@ -379,6 +408,19 @@ def list_reports():
             simulation_id=simulation_id,
             limit=limit
         )
+        if Config.AUTH_ENABLED:
+            us = getattr(g, 'user_sub', None)
+            if simulation_id:
+                serr = ensure_simulation_owned(us, simulation_id)
+                if serr:
+                    return jsonify_error(serr)
+            else:
+                allowed = set(
+                    filter_owned_ids(
+                        us, [r.simulation_id for r in reports], kind="simulation"
+                    )
+                )
+                reports = [r for r in reports if r.simulation_id in allowed]
         
         return jsonify({
             "success": True,
@@ -403,6 +445,10 @@ def download_report(report_id: str):
     返回Markdown文件
     """
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         report = ReportManager.get_report(report_id)
         
         if not report:
@@ -445,6 +491,10 @@ def download_report(report_id: str):
 def delete_report(report_id: str):
     """删除报告"""
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         success = ReportManager.delete_report(report_id)
         
         if not success:
@@ -508,6 +558,10 @@ def chat_with_report_agent():
                 "success": False,
                 "error": t('api.requireSimulationId')
             }), 400
+
+        err = ensure_simulation_owned(getattr(g, 'user_sub', None), simulation_id)
+        if err:
+            return jsonify_error(err)
 
         if not message:
             return jsonify({
@@ -585,6 +639,10 @@ def get_report_progress(report_id: str):
         }
     """
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         progress = ReportManager.get_progress(report_id)
         
         if not progress:
@@ -633,6 +691,10 @@ def get_report_sections(report_id: str):
         }
     """
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         sections = ReportManager.get_generated_sections(report_id)
         
         # 获取报告状态
@@ -673,6 +735,10 @@ def get_single_section(report_id: str, section_index: int):
         }
     """
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         section_path = ReportManager._get_section_path(report_id, section_index)
         
         if not os.path.exists(section_path):
@@ -724,6 +790,10 @@ def check_report_status(simulation_id: str):
         }
     """
     try:
+        err = ensure_simulation_owned(getattr(g, 'user_sub', None), simulation_id)
+        if err:
+            return jsonify_error(err)
+
         report = ReportManager.get_report_by_simulation(simulation_id)
         
         has_report = report is not None
@@ -796,6 +866,10 @@ def get_agent_log(report_id: str):
         }
     """
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         from_line = request.args.get('from_line', 0, type=int)
         
         log_data = ReportManager.get_agent_log(report_id, from_line=from_line)
@@ -829,6 +903,10 @@ def stream_agent_log(report_id: str):
         }
     """
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         logs = ReportManager.get_agent_log_stream(report_id)
         
         return jsonify({
@@ -878,6 +956,10 @@ def get_console_log(report_id: str):
         }
     """
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         from_line = request.args.get('from_line', 0, type=int)
         
         log_data = ReportManager.get_console_log(report_id, from_line=from_line)
@@ -911,6 +993,10 @@ def stream_console_log(report_id: str):
         }
     """
     try:
+        err = ensure_report_id_owned(getattr(g, 'user_sub', None), report_id)
+        if err:
+            return jsonify_error(err)
+
         logs = ReportManager.get_console_log_stream(report_id)
         
         return jsonify({
@@ -956,6 +1042,10 @@ def search_graph_tool():
                 "success": False,
                 "error": t('api.requireGraphIdAndQuery')
             }), 400
+
+        gerr = ensure_graph_owned(getattr(g, 'user_sub', None), graph_id)
+        if gerr:
+            return jsonify_error(gerr)
         
         from ..services.zep_tools import ZepToolsService
         
@@ -1000,6 +1090,10 @@ def get_graph_statistics_tool():
                 "success": False,
                 "error": t('api.requireGraphId')
             }), 400
+
+        gerr = ensure_graph_owned(getattr(g, 'user_sub', None), graph_id)
+        if gerr:
+            return jsonify_error(gerr)
         
         from ..services.zep_tools import ZepToolsService
         

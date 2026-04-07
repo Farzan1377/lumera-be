@@ -6,9 +6,16 @@
 import os
 import traceback
 import threading
-from flask import request, jsonify
+from flask import request, jsonify, g
 
 from . import graph_bp
+from ..auth.access import (
+    ensure_project_owned,
+    ensure_graph_owned,
+    ensure_task_owned,
+    filter_owned_ids,
+    jsonify_error,
+)
 from ..config import Config
 from ..services.ontology_generator import OntologyGenerator
 from ..services.graph_builder import GraphBuilderService
@@ -46,6 +53,10 @@ def get_project(project_id: str):
             "error": t('api.projectNotFound', id=project_id)
         }), 404
 
+    err = ensure_project_owned(getattr(g, 'user_sub', None), project_id)
+    if err:
+        return jsonify_error(err)
+
     return jsonify({
         "success": True,
         "data": project.to_dict()
@@ -59,7 +70,11 @@ def list_projects():
     """
     limit = request.args.get('limit', 50, type=int)
     projects = ProjectManager.list_projects(limit=limit)
-    
+    if Config.AUTH_ENABLED:
+        us = getattr(g, 'user_sub', None)
+        allowed = set(filter_owned_ids(us, [p.project_id for p in projects], kind="project"))
+        projects = [p for p in projects if p.project_id in allowed]
+
     return jsonify({
         "success": True,
         "data": [p.to_dict() for p in projects],
@@ -72,6 +87,10 @@ def delete_project(project_id: str):
     """
     删除项目
     """
+    err = ensure_project_owned(getattr(g, 'user_sub', None), project_id)
+    if err:
+        return jsonify_error(err)
+
     success = ProjectManager.delete_project(project_id)
     
     if not success:
@@ -98,6 +117,10 @@ def reset_project(project_id: str):
             "success": False,
             "error": t('api.projectNotFound', id=project_id)
         }), 404
+
+    err = ensure_project_owned(getattr(g, 'user_sub', None), project_id)
+    if err:
+        return jsonify_error(err)
 
     # 重置到本体已生成状态
     if project.ontology:
@@ -313,6 +336,10 @@ def build_graph():
                 "error": t('api.projectNotFound', id=project_id)
             }), 404
 
+        err = ensure_project_owned(getattr(g, 'user_sub', None), project_id)
+        if err:
+            return jsonify_error(err)
+
         # 检查项目状态
         force = data.get('force', False)  # 强制重新构建
         
@@ -363,7 +390,10 @@ def build_graph():
         
         # 创建异步任务
         task_manager = TaskManager()
-        task_id = task_manager.create_task(f"构建图谱: {graph_name}")
+        task_id = task_manager.create_task(
+            task_type="graph_build",
+            metadata={"project_id": project_id, "graph_name": graph_name},
+        )
         logger.info(f"创建图谱构建任务: task_id={task_id}, project_id={project_id}")
         
         # 更新项目状态
@@ -543,6 +573,10 @@ def get_task(task_id: str):
             "success": False,
             "error": t('api.taskNotFound', id=task_id)
         }), 404
+
+    err = ensure_task_owned(getattr(g, 'user_sub', None), task)
+    if err:
+        return jsonify_error(err)
     
     return jsonify({
         "success": True,
@@ -555,11 +589,20 @@ def list_tasks():
     """
     列出所有任务
     """
-    tasks = TaskManager().list_tasks()
-    
+    tm = TaskManager()
+    tasks = tm.list_tasks()
+    if Config.AUTH_ENABLED:
+        us = getattr(g, 'user_sub', None)
+        filtered = []
+        for td in tasks:
+            task = tm.get_task(td["task_id"])
+            if task and ensure_task_owned(us, task) is None:
+                filtered.append(td)
+        tasks = filtered
+
     return jsonify({
         "success": True,
-        "data": [t.to_dict() for t in tasks],
+        "data": tasks,
         "count": len(tasks)
     })
 
@@ -572,6 +615,10 @@ def get_graph_data(graph_id: str):
     获取图谱数据（节点和边）
     """
     try:
+        err = ensure_graph_owned(getattr(g, 'user_sub', None), graph_id)
+        if err:
+            return jsonify_error(err)
+
         if not Config.ZEP_API_KEY:
             return jsonify({
                 "success": False,
@@ -600,6 +647,10 @@ def delete_graph(graph_id: str):
     删除Zep图谱
     """
     try:
+        err = ensure_graph_owned(getattr(g, 'user_sub', None), graph_id)
+        if err:
+            return jsonify_error(err)
+
         if not Config.ZEP_API_KEY:
             return jsonify({
                 "success": False,

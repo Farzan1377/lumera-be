@@ -62,6 +62,24 @@ class Config:
     REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
     REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
     REPORT_AGENT_TEMPERATURE = float(os.environ.get('REPORT_AGENT_TEMPERATURE', '0.5'))
+
+    # ----- API auth (Cognito + DynamoDB ownership) -----
+    # Set AUTH_ENABLED=true to require Authorization: Bearer <JWT> on /api/* and enforce DynamoDB ownership.
+    AUTH_ENABLED = os.environ.get('AUTH_ENABLED', 'false').lower() == 'true'
+    COGNITO_REGION = os.environ.get('COGNITO_REGION') or os.environ.get('AWS_REGION', 'us-east-1')
+    COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID', '')
+    COGNITO_APP_CLIENT_ID = os.environ.get('COGNITO_APP_CLIENT_ID', '')
+    COGNITO_JWKS_CACHE_SECONDS = int(os.environ.get('COGNITO_JWKS_CACHE_SECONDS', '3600'))
+    AWS_REGION = os.environ.get('AWS_REGION', '') or COGNITO_REGION
+    # Optional: LocalStack / custom endpoint
+    AWS_DYNAMODB_ENDPOINT_URL = (os.environ.get('AWS_DYNAMODB_ENDPOINT_URL') or '').strip() or None
+    AUTH_DYNAMODB_TABLE_NAME = os.environ.get('AUTH_DYNAMODB_TABLE_NAME', '')
+    # Partition key attribute for lookups (override per resource if your table uses different key names).
+    AUTH_DYNAMODB_PK_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_PK_ATTRIBUTE', 'id')
+    AUTH_DYNAMODB_USER_SUB_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_USER_SUB_ATTRIBUTE', 'userSub')
+    AUTH_DYNAMODB_SIMULATION_PK_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_SIMULATION_PK_ATTRIBUTE', '')
+    AUTH_DYNAMODB_PROJECT_PK_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_PROJECT_PK_ATTRIBUTE', '')
+    AUTH_DYNAMODB_GRAPH_PK_ATTRIBUTE = os.environ.get('AUTH_DYNAMODB_GRAPH_PK_ATTRIBUTE', '')
     
     @classmethod
     def validate(cls):
@@ -71,5 +89,14 @@ class Config:
             errors.append("LLM_API_KEY 未配置")
         if not cls.ZEP_API_KEY:
             errors.append("ZEP_API_KEY 未配置")
+        if cls.AUTH_ENABLED:
+            if not cls.COGNITO_USER_POOL_ID:
+                errors.append("AUTH_ENABLED 为 true 时需要 COGNITO_USER_POOL_ID")
+            if not cls.COGNITO_APP_CLIENT_ID:
+                errors.append("AUTH_ENABLED 为 true 时需要 COGNITO_APP_CLIENT_ID")
+            if not cls.AUTH_DYNAMODB_TABLE_NAME:
+                errors.append("AUTH_ENABLED 为 true 时需要 AUTH_DYNAMODB_TABLE_NAME")
+            if not cls.AUTH_DYNAMODB_PK_ATTRIBUTE:
+                errors.append("AUTH_ENABLED 为 true 时需要 AUTH_DYNAMODB_PK_ATTRIBUTE")
         return errors
 
